@@ -13,7 +13,8 @@ http://developer.android.com/sdk/installing/index.html and follow the
 instructions there.
 
 2. You should have the Cast SDK and all necessary support libraries installed.
-For instructions on installation, go to developers.google.com/cast.
+For instructions on installation, go to developers.google.com/cast, or see the
+included INSTALL_CAST_ECLIPSE.txt.
 
 2. OPTIONAL: Your app name and receiver URLs should be whitelisted, so that if
 you want to upload your own copy of the receiver, the Cast will know where to
