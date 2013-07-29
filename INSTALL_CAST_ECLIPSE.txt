@@ -61,13 +61,11 @@ above for your downloaded and extracted SDK.
 
 As an included library: 
 
-1. Copy the /libs folder from your downloaded SDK to your Cast-related project. 
+1. Copy the /libs folder from your downloaded SDK to your Cast-related project.
+   Make sure the folder is named libs, and not "lib" or something else similar.
 
-2. In the Package Explorer window, open (your Cast project)/libs and right
-   click on GoogleCastSdkAndroid-x.x.x.jar. Select Build Path->Add to Build
-   Path.
-   
-3. Your project should now compile without errors.
+2. You do not need to add the .jar to your build path if you name the folder
+   "libs". Your project should now compile without errors.
 
 ***
 
@@ -123,6 +121,14 @@ D. Common Errors
    This error results when the Cast SDK is incorrectly set up. Check the Cast
    SDK Setup instructions in section B. again, and try the other method if
    your current one doesn't work.
+   
+5. My Cast project builds but doesn't run with an "Unable to instantiate
+   activity ComponentInfo" bug.
+   
+   This error occurs as a result of previously given erroneous information. If
+   you've copied the Cast SDK jar into your project's /libs folder, you DO NOT
+   need to add the jar to your build path. Remove it from the build path and
+   the project should run as normal.
 
 
 
