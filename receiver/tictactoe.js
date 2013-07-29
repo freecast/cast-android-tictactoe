@@ -194,8 +194,8 @@ var cast = window.cast || {};
 
       if ((this.mPlayer1 == -1) || (this.mPlayer2 == -1)) {
         console.log('Looks like one of the players is not there');
-        consoel.log('mPlayer1: ' + this.mPlayer1);
-        consoel.log('mPlayer2: ' + this.mPlayer2);
+        console.log('mPlayer1: ' + this.mPlayer1);
+        console.log('mPlayer2: ' + this.mPlayer2);
         return;
       }
 
