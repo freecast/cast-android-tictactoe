@@ -45,18 +45,9 @@
         android:layout_height="wrap_content"
         android:layout_marginBottom="10dip"
         android:gravity="center_horizontal"
+        android:text="@string/select_device_text"
         android:textColor="@android:color/white"
         android:textIsSelectable="false"
         android:textSize="24sp" />
-
-    <Button
-        android:id="@+id/play_again"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="10dip"
-        android:gravity="center_horizontal"
-        android:text="@string/play_again"
-        android:textSize="24sp"
-        android:visibility="invisible" />
 
 </LinearLayout>

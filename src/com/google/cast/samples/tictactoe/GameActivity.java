@@ -7,10 +7,10 @@
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software 
+ * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and 
+ * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 
@@ -24,25 +24,38 @@ import com.google.cast.ApplicationMetadata;
 import com.google.cast.ApplicationSession;
 import com.google.cast.CastContext;
 import com.google.cast.CastDevice;
+import com.google.cast.Logger;
+import com.google.cast.MediaRouteAdapter;
+import com.google.cast.MediaRouteHelper;
+import com.google.cast.MediaRouteStateChangeListener;
 import com.google.cast.SessionError;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.support.v4.view.MenuItemCompat;
+import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.MediaRouteActionProvider;
+import android.support.v7.media.MediaRouteSelector;
+import android.support.v7.media.MediaRouter;
+import android.support.v7.media.MediaRouter.RouteInfo;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.widget.TextView;
 
 import java.io.IOException;
 
 /**
- * An activity which both presents a UI on the first screen and casts the TicTacToe game board to 
+ * An activity which both presents a UI on the first screen and casts the TicTacToe game board to
  * the selected Cast device and its attached second screen.
  */
-public class GameActivity extends Activity {
+public class GameActivity extends ActionBarActivity implements MediaRouteAdapter {
     private static final String TAG = GameActivity.class.getSimpleName();
+    private static final Logger sLog = new Logger(TAG, true);
+    private static final String APP_NAME = "TicTacToe";
 
     private ApplicationSession mSession;
     private SessionListener mSessionListener;
@@ -52,8 +65,14 @@ public class GameActivity extends Activity {
     private TextView mInfoView;
     private TextView mPlayerNameView;
 
-    /** 
-     * Called when the activity is first created. Initializes the game with necessary listeners 
+    private CastContext mCastContext;
+    private CastDevice mSelectedDevice;
+    private MediaRouter mMediaRouter;
+    private MediaRouteSelector mMediaRouteSelector;
+    private MediaRouter.Callback mMediaRouterCallback;
+
+    /**
+     * Called when the activity is first created. Initializes the game with necessary listeners
      * for player interaction, and creates a new message stream.
      */
     @Override
@@ -71,26 +90,38 @@ public class GameActivity extends Activity {
 
         mSessionListener = new SessionListener();
         mGameMessageStream = new TicTacToeStream();
+
+        mCastContext = new CastContext(getApplicationContext());
+        MediaRouteHelper.registerMinimalMediaRouteProvider(mCastContext, this);
+        mMediaRouter = MediaRouter.getInstance(getApplicationContext());
+        mMediaRouteSelector = MediaRouteHelper.buildMediaRouteSelector(
+                MediaRouteHelper.CATEGORY_CAST, APP_NAME, null);
+        mMediaRouterCallback = new MediaRouterCallback();
     }
 
     /**
-     * Called on application start. Using the previously selected Cast device, attempts to begin a 
+     * Called when the options menu is first created.
+     */
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
+        getMenuInflater().inflate(R.menu.main, menu);
+        MenuItem mediaRouteMenuItem = menu.findItem(R.id.media_route_menu_item);
+        MediaRouteActionProvider mediaRouteActionProvider =
+                (MediaRouteActionProvider) MenuItemCompat.getActionProvider(mediaRouteMenuItem);
+        mediaRouteActionProvider.setRouteSelector(mMediaRouteSelector);
+        return true;
+    }
+
+    /**
+     * Called on application start. Using the previously selected Cast device, attempts to begin a
      * session using the application name TicTacToe.
      */
     @Override
     protected void onStart() {
         super.onStart();
-        CastDevice selectedDevice = TicTacToeApplication.getInstance().getDevice();
-        CastContext castContext =
-                TicTacToeApplication.getInstance().getCastContext();
-
-        mSession = new ApplicationSession(castContext, selectedDevice);
-        mSession.setListener(mSessionListener);
-        try {
-            mSession.startSession("TicTacToe");
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to open a session", e);
-        }
+        mMediaRouter.addCallback(mMediaRouteSelector, mMediaRouterCallback,
+                MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
     }
 
     /**
@@ -107,22 +138,40 @@ public class GameActivity extends Activity {
      */
     @Override
     protected void onStop() {
-        if (mSession != null) {
-            if (mSession.hasChannel()) {
-                mGameMessageStream.leave();
-            }
+        endSession();
+        mMediaRouter.removeCallback(mMediaRouterCallback);
+        super.onStop();
+    }
+
+    /**
+     * Ends any existing application session with a Chromecast device.
+     */
+    private void endSession() {
+        if ((mSession != null) && (mSession.hasStarted())) {
             try {
-                if (mSession.hasStarted()) {
-                    mSession.endSession();
+                if (mSession.hasChannel()) {
+                    mGameMessageStream.leave();
                 }
+                mSession.endSession();
             } catch (IOException e) {
                 Log.e(TAG, "Failed to end the session.", e);
             } catch (IllegalStateException e) {
                 Log.e(TAG, "Unable to end session.", e);
+            } finally {
+                mSession = null;
             }
         }
-        mSession = null;
-        super.onStop();
+    }
+
+    /**
+     * Unregisters the media route provider and disposes the CastContext.
+     */
+    @Override
+    public void onDestroy() {
+        MediaRouteHelper.unregisterMediaRouteProvider(mCastContext);
+        mCastContext.dispose();
+        mCastContext = null;
+        super.onDestroy();
     }
 
     /**
@@ -135,7 +184,7 @@ public class GameActivity extends Activity {
     }
 
     /**
-     * Returns the string representation of a State object representing a player, or null if the 
+     * Returns the string representation of a State object representing a player, or null if the
      * passed player does not correspond to an X or O player.
      */
     private String convertGameStateToPlayer(State player) {
@@ -149,7 +198,7 @@ public class GameActivity extends Activity {
     }
 
     /**
-     * Builds and displays a dialog indicating the completion of the game, whether by forfeit or 
+     * Builds and displays a dialog indicating the completion of the game, whether by forfeit or
      * by one player winning.
      */
     private void setFinished(
@@ -191,8 +240,43 @@ public class GameActivity extends Activity {
                 .show();
     }
 
+    private void setSelectedDevice(CastDevice device) {
+        mSelectedDevice = device;
+
+        if (mSelectedDevice != null) {
+            mSession = new ApplicationSession(mCastContext, mSelectedDevice);
+            mSession.setListener(mSessionListener);
+
+            try {
+                mSession.startSession(APP_NAME);
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to open a session", e);
+            }
+        } else {
+            endSession();
+            mPlayerNameView.setText(null);
+            mInfoView.setText(R.string.select_device_text);
+        }
+    }
+
     /**
-     * A class which listens for the selection of a certain cell and attempts to place a mark in 
+     * Called when a user selects a route.
+     */
+    private void onRouteSelected(RouteInfo route) {
+        sLog.d("onRouteSelected: %s", route.getName());
+        MediaRouteHelper.requestCastDeviceForRoute(route);
+    }
+
+    /**
+     * Called when a user unselects a route.
+     */
+    private void onRouteUnselected(RouteInfo route) {
+        sLog.d("onRouteUnselected: %s", route.getName());
+        setSelectedDevice(null);
+    }
+
+    /**
+     * A class which listens for the selection of a certain cell and attempts to place a mark in
      * that cell.
      */
     private class CellListener implements ICellListener {
@@ -209,6 +293,8 @@ public class GameActivity extends Activity {
     private class SessionListener implements ApplicationSession.Listener {
         @Override
         public void onSessionStarted(ApplicationMetadata appMetadata) {
+            sLog.d("SessionListener.onStarted");
+
             mInfoView.setText(R.string.waiting_for_player_assignment);
             ApplicationChannel channel = mSession.getChannel();
             if (channel == null) {
@@ -221,12 +307,12 @@ public class GameActivity extends Activity {
 
         @Override
         public void onSessionStartFailed(SessionError error) {
-            Log.d(TAG, "start session failed: " + error.toString());
+            sLog.d("SessionListener.onStartFailed: %s", error);
         }
 
         @Override
         public void onSessionEnded(SessionError error) {
-            Log.d(TAG, "session ended: " + ((error == null) ? "OK" : error.toString()));
+            sLog.d("SessionListener.onEnded: %s", error);
         }
     }
 
@@ -236,7 +322,7 @@ public class GameActivity extends Activity {
     private class TicTacToeStream extends GameMessageStream {
         /**
          * Sets displays accordingly when a new player joins the game.
-         * 
+         *
          * @param playerSymbol either X or O
          * @param opponentName the name of the player who just joined an existing game
          */
@@ -346,5 +432,39 @@ public class GameActivity extends Activity {
                     .create()
                     .show();
         }
+    }
+
+    /**
+     * An extension of the MediaRoute.Callback specifically for the TicTacToe game.
+     */
+    private class MediaRouterCallback extends MediaRouter.Callback {
+        @Override
+        public void onRouteSelected(MediaRouter router, RouteInfo route) {
+            sLog.d("onRouteSelected: %s", route);
+            GameActivity.this.onRouteSelected(route);
+        }
+
+        @Override
+        public void onRouteUnselected(MediaRouter router, RouteInfo route) {
+            sLog.d("onRouteUnselected: %s", route);
+            GameActivity.this.onRouteUnselected(route);
+        }
+    }
+
+    /* MediaRouteAdapter implementation */
+
+    @Override
+    public void onDeviceAvailable(CastDevice device, String routeId,
+            MediaRouteStateChangeListener listener) {
+        sLog.d("onDeviceAvailable: %s (route %s)", device, routeId);
+        setSelectedDevice(device);
+    }
+
+    @Override
+    public void onSetVolume(double volume) {
+    }
+
+    @Override
+    public void onUpdateVolume(double delta) {
     }
 }
