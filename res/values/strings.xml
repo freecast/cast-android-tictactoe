@@ -34,5 +34,6 @@
     <string name="game_over">Game Over</string>
     <string name="media_route_menu_title">Play on&#8230;</string>
     <string name="select_device_text">Select device to start the game.</string>
+    <string name="join_game">Join the Game</string>
 
 </resources>

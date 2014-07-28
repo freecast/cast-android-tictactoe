@@ -16,8 +16,9 @@
 
 /**
  * @fileoverview Tic Tac Toe Gameplay with Chromecast
- * This file exposes cast.TicTacToe as an object containing a ChannelHandler
- * and capable of receiving and sending messages to the sender application.
+ * This file exposes cast.TicTacToe as an object containing a
+ * CastMessageBus and capable of receiving and sending messages
+ * to the sender application.
  */
 
 // External namespace for cast specific javascript library
@@ -27,7 +28,7 @@ var cast = window.cast || {};
 (function() {
   'use strict';
 
-  TicTacToe.PROTOCOL = 'com.google.chromecast.demo.tictactoe';
+  TicTacToe.PROTOCOL = 'urn:x-cast:com.google.cast.demo.tictactoe';
 
   TicTacToe.PLAYER = {
     O: 'O',
@@ -35,53 +36,52 @@ var cast = window.cast || {};
   };
 
   /**
-   * Creates a TicTacToe object with an optional board and attaches a
-   * cast.receiver.ChannelHandler, which receives messages from the
-   * channel between the sender and receiver.
-   * @param {board} opt_board an optional game board.
+   * Creates a TicTacToe object.
+   * @param {board} board an optional game board.
    * @constructor
    */
-  function TicTacToe(opt_board) {
-    this.mBoard = opt_board;
+  function TicTacToe(board) {
+    this.mBoard = board;
     this.mPlayer1 = -1;
     this.mPlayer2 = -1;
     this.mCurrentPlayer;
 
-    this.mChannelHandler =
-        new cast.receiver.ChannelHandler('TicTacToeDebug');
-    this.mChannelHandler.addEventListener(
-        cast.receiver.Channel.EventType.MESSAGE,
-        this.onMessage.bind(this));
-    this.mChannelHandler.addEventListener(
-        cast.receiver.Channel.EventType.OPEN,
-        this.onChannelOpened.bind(this));
-    this.mChannelHandler.addEventListener(
-        cast.receiver.Channel.EventType.CLOSED,
-        this.onChannelClosed.bind(this));
+    console.log('********TicTacToe********');
+    this.castReceiverManager_ = cast.receiver.CastReceiverManager.getInstance();
+    this.castMessageBus_ =
+        this.castReceiverManager_.getCastMessageBus(TicTacToe.PROTOCOL,
+        cast.receiver.CastMessageBus.MessageType.JSON);
+    this.castMessageBus_.onMessage = this.onMessage.bind(this);
+    this.castReceiverManager_.onSenderConnected =
+        this.onSenderConnected.bind(this);
+    this.castReceiverManager_.onSenderDisconnected =
+        this.onSenderDisconnected.bind(this);
+    this.castReceiverManager_.start();
   }
+
 
   // Adds event listening functions to TicTacToe.prototype.
   TicTacToe.prototype = {
 
     /**
-     * Channel opened event; checks number of open channels.
-     * @param {event} event the channel open event.
+     * Sender Connected event
+     * @param {event} event the sender connected event.
      */
-    onChannelOpened: function(event) {
-      console.log('onChannelOpened. Total number of channels: ' +
-          this.mChannelHandler.getChannels().length);
+    onSenderConnected: function(event) {
+      console.log('onSenderConnected. Total number of senders: ' +
+          this.castReceiverManager_.getSenders().length);
     },
 
     /**
-     * Channel closed event; if all devices are disconnected,
+     * Sender disconnected event; if all senders are disconnected,
      * closes the application.
-     * @param {event} event the channel close event.
+     * @param {event} event the sender disconnected event.
      */
-    onChannelClosed: function(event) {
-      console.log('onChannelClosed. Total number of channels: ' +
-          this.mChannelHandler.getChannels().length);
+    onSenderDisconnected: function(event) {
+      console.log('onSenderDisconnected. Total number of senders: ' +
+          this.castReceiverManager_.getSenders().length);
 
-      if (this.mChannelHandler.getChannels().length == 0) {
+      if (this.castReceiverManager_.getSenders().length == 0) {
         window.close();
       }
     },
@@ -92,44 +92,44 @@ var cast = window.cast || {};
      * @param {event} event the event to be processed.
      */
     onMessage: function(event) {
-      var message = event.message;
-      var channel = event.target;
-      console.log('********onMessage********' + JSON.stringify(message));
+      var message = event.data;
+      var senderId = event.senderId;
+      console.log('********onMessage********' + JSON.stringify(event.data));
       console.log('mPlayer1: ' + this.mPlayer1);
       console.log('mPlayer2: ' + this.mPlayer2);
 
       if (message.command == 'join') {
-        this.onJoin(channel, message);
+        this.onJoin(senderId, message);
       } else if (message.command == 'leave') {
-        this.onLeave(channel);
+        this.onLeave(senderId);
       } else if (message.command == 'move') {
-        this.onMove(channel, message);
+        this.onMove(senderId, message);
       } else if (message.command == 'board_layout_request') {
-        this.onBoardLayoutRequest(channel);
+        this.onBoardLayoutRequest(senderId);
       } else {
-        cast.log.error('Invalid message command: ' + message.command);
+        console.log('Invalid message command: ' + message.command);
       }
     },
 
     /**
      * Player joined event: registers a new player who joined the game, or
      * prevents player from joining if invalid.
-     * @param {cast.receiver.channel} channel the channel the message came from.
+     * @param {string} senderId the sender the message came from.
      * @param {Object|string} message the name of the player who just joined.
      */
-    onJoin: function(channel, message) {
-      console.log('****onJoin: ' + JSON.stringify(message));
+    onJoin: function(senderId, message) {
+      console.log('****onJoin****');
 
       if ((this.mPlayer1 != -1) &&
-          (this.mPlayer1.channel == channel)) {
-        this.sendError(channel, 'You are already ' +
+          (this.mPlayer1.senderId == senderId)) {
+        this.sendError(senderId, 'You are already ' +
                        this.mPlayer1.player +
                        ' You aren\'t allowed to play against yourself.');
         return;
       }
       if ((this.mPlayer2 != -1) &&
-          (this.mPlayer2.channel == channel)) {
-        this.sendError(channel, 'You are already ' +
+          (this.mPlayer2.senderId == senderId)) {
+        this.sendError(senderId, 'You are already ' +
                        this.mPlayer2.player +
                        ' You aren\'t allowed to play against yourself.');
         return;
@@ -138,14 +138,14 @@ var cast = window.cast || {};
       if (this.mPlayer1 == -1) {
         this.mPlayer1 = new Object();
         this.mPlayer1.name = message.name;
-        this.mPlayer1.channel = channel;
+        this.mPlayer1.senderId = senderId;
       } else if (this.mPlayer2 == -1) {
         this.mPlayer2 = new Object();
         this.mPlayer2.name = message.name;
-        this.mPlayer2.channel = channel;
+        this.mPlayer2.senderId = senderId;
       } else {
         console.log('Unable to join a full game.');
-        this.sendError(channel, 'Game is full.');
+        this.sendError(senderId, 'Game is full.');
         return;
       }
 
@@ -161,14 +161,14 @@ var cast = window.cast || {};
     /**
      * Player leave event: determines which player left and unregisters that
      * player, and ends the game if all players are absent.
-     * @param {cast.receiver.channel} channel the channel of the leaving player.
+     * @param {string} senderId the sender ID of the leaving player.
      */
-    onLeave: function(channel) {
-      console.log('****OnLeave');
+    onLeave: function(senderId) {
+      console.log('****OnLeave****');
 
-      if (this.mPlayer1 != -1 && this.mPlayer1.channel == channel) {
+      if (this.mPlayer1 != -1 && this.mPlayer1.senderId == senderId) {
         this.mPlayer1 = -1;
-      } else if (this.mPlayer2 != -1 && this.mPlayer2.channel == channel) {
+      } else if (this.mPlayer2 != -1 && this.mPlayer2.senderId == senderId) {
         this.mPlayer2 = -1;
       } else {
         console.log('Neither player left the game');
@@ -184,12 +184,11 @@ var cast = window.cast || {};
     /**
      * Move event: checks whether a valid move was made and updates the board
      * as necessary.
-     * @param {cast.receiver.channel} channel the source of the move, which
-     *     determines the player.
+     * @param {string} senderId the sender that made the move.
      * @param {Object|string} message contains the row and column of the move.
      */
-    onMove: function(channel, message) {
-      console.log('****onMove: ' + JSON.stringify(message));
+    onMove: function(senderId, message) {
+      console.log('****onMove****');
       var isMoveValid;
 
       if ((this.mPlayer1 == -1) || (this.mPlayer2 == -1)) {
@@ -199,7 +198,7 @@ var cast = window.cast || {};
         return;
       }
 
-      if (this.mPlayer1.channel == channel) {
+      if (this.mPlayer1.senderId == senderId) {
         if (this.mPlayer1.player == this.mCurrentPlayer) {
           if (this.mPlayer1.player == TicTacToe.PLAYER.X) {
             isMoveValid = this.mBoard.drawCross(message.row, message.column);
@@ -208,10 +207,10 @@ var cast = window.cast || {};
           }
         } else {
           console.log('Ignoring the move. It\'s not your turn.');
-          this.sendError(channel, 'It\'s not your turn.');
+          this.sendError(senderId, 'It\'s not your turn.');
           return;
         }
-      } else if (this.mPlayer2.channel == channel) {
+      } else if (this.mPlayer2.senderId == senderId) {
         if (this.mPlayer2.player == this.mCurrentPlayer) {
           if (this.mPlayer2.player == TicTacToe.PLAYER.X) {
             isMoveValid = this.mBoard.drawCross(message.row, message.column);
@@ -220,27 +219,28 @@ var cast = window.cast || {};
           }
         } else {
           console.log('Ignoring the move. It\'s not your turn.');
-          this.sendError(channel, 'It\'s not your turn.');
+          this.sendError(senderId, 'It\'s not your turn.');
           return;
         }
       } else {
         console.log('Ignorning message. Someone other than the current' +
             'players sent a move.');
-        this.sendError(channel, 'You are not playing the game');
+        this.sendError(senderId, 'You are not playing the game');
         return;
       }
 
       if (isMoveValid === false) {
-        this.sendError(channel, 'Your last move was invalid');
+        this.sendError(senderId, 'Your last move was invalid');
         return;
       }
 
       var isGameOver = this.mBoard.isGameOver();
-      this.broadcast({ event: 'moved',
-                       player: this.mCurrentPlayer,
-                       row: message.row,
-                       column: message.column,
-                       game_over: isGameOver });
+      this.broadcast({
+        event: 'moved',
+        player: this.mCurrentPlayer,
+        row: message.row,
+        column: message.column,
+        game_over: isGameOver });
 
       console.log('isGameOver: ' + isGameOver);
       console.log('winningLoc: ' + this.mBoard.getWinningLocation());
@@ -258,39 +258,42 @@ var cast = window.cast || {};
     /**
      * Request event for the board layout: sends the current layout of pieces
      * on the board through the channel.
-     * @param {cast.receiver.channel} channel the channel the event came from.
+     * @param {string} senderId the sender the event came from.
      */
-    onBoardLayoutRequest: function(channel) {
-      console.log('****onBoardLayoutRequest');
+    onBoardLayoutRequest: function(senderId) {
+      console.log('****onBoardLayoutRequest****');
       var boardLayout = [];
       for (var i = 0; i < 3; i++) {
         for (var j = 0; j < 3; j++) {
           boardLayout[i * 3 + j] = this.mBoard.mBoard[i][j];
         }
       }
-      channel.send({ 'event': 'board_layout_response',
-                     'board': boardLayout });
+      this.castMessageBus_.send(senderId, {
+        'event': 'board_layout_response',
+        'board': boardLayout });
     },
 
-    sendError: function(channel, errorMessage) {
-      channel.send({ event: 'error',
-                     message: errorMessage });
+    sendError: function(senderId, errorMessage) {
+      this.castMessageBus_.send(senderId, {
+        'event': 'error',
+        'message': errorMessage });
     },
 
     broadcastEndGame: function(endState, winningLocation) {
-      console.log('****endGame');
+      console.log('****endGame****');
       this.mPlayer1 = -1;
       this.mPlayer2 = -1;
-      this.broadcast({ event: 'endgame',
-                       end_state: endState,
-                       winning_location: winningLocation });
+      this.broadcast({
+        event: 'endgame',
+        end_state: endState,
+        winning_location: winningLocation });
     },
 
     /**
      * @private
      */
     startGame_: function() {
-      console.log('****startGame');
+      console.log('****startGame****');
       var firstPlayer = Math.floor((Math.random() * 10) % 2);
       this.mPlayer1.player = (firstPlayer === 0) ?
           TicTacToe.PLAYER.X : TicTacToe.PLAYER.O;
@@ -298,12 +301,18 @@ var cast = window.cast || {};
           TicTacToe.PLAYER.O : TicTacToe.PLAYER.X;
       this.mCurrentPlayer = TicTacToe.PLAYER.X;
 
-      this.mPlayer1.channel.send({ event: 'joined',
-                                   player: this.mPlayer1.player,
-                                   opponent: this.mPlayer2.name });
-      this.mPlayer2.channel.send({ event: 'joined',
-                                   player: this.mPlayer2.player,
-                                   opponent: this.mPlayer1.name });
+      this.castMessageBus_.send(
+          this.mPlayer1.senderId, {
+            event: 'joined',
+            player: this.mPlayer1.player,
+            opponent: this.mPlayer2.name
+          });
+      this.castMessageBus_.send(
+          this.mPlayer2.senderId, {
+            event: 'joined',
+            player: this.mPlayer2.player,
+            opponent: this.mPlayer1.name
+          });
     },
 
     /**
@@ -311,10 +320,7 @@ var cast = window.cast || {};
      * @param {Object|string} message the message to broadcast.
      */
     broadcast: function(message) {
-      this.mChannelHandler.getChannels().forEach(
-        function(channel) {
-          channel.send(message);
-        });
+      this.castMessageBus_.broadcast(message);
     }
 
   };

@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
-package com.google.cast.samples.tictactoe;
+package com.google.android.gms.cast.samples.tictactoe;
 
-import com.google.cast.samples.tictactoe.GameView.ICellListener;
-import com.google.cast.samples.tictactoe.GameView.State;
-
-import com.google.cast.ApplicationChannel;
-import com.google.cast.ApplicationMetadata;
-import com.google.cast.ApplicationSession;
-import com.google.cast.CastContext;
-import com.google.cast.CastDevice;
-import com.google.cast.Logger;
-import com.google.cast.MediaRouteAdapter;
-import com.google.cast.MediaRouteHelper;
-import com.google.cast.MediaRouteStateChangeListener;
-import com.google.cast.SessionError;
+import com.google.android.gms.cast.ApplicationMetadata;
+import com.google.android.gms.cast.Cast;
+import com.google.android.gms.cast.Cast.ApplicationConnectionResult;
+import com.google.android.gms.cast.CastDevice;
+import com.google.android.gms.cast.CastMediaControlIntent;
+import com.google.android.gms.cast.samples.tictactoe.GameView.ICellListener;
+import com.google.android.gms.cast.samples.tictactoe.GameView.State;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesUtil;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.common.api.Status;
 
 import android.app.AlertDialog;
 import android.content.DialogInterface;
@@ -44,6 +43,8 @@ import android.support.v7.media.MediaRouter.RouteInfo;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
 
 import java.io.IOException;
@@ -52,34 +53,37 @@ import java.io.IOException;
  * An activity which both presents a UI on the first screen and casts the TicTacToe game board to
  * the selected Cast device and its attached second screen.
  */
-public class GameActivity extends ActionBarActivity implements MediaRouteAdapter {
+public class GameActivity extends ActionBarActivity {
     private static final String TAG = GameActivity.class.getSimpleName();
-    private static final Logger sLog = new Logger(TAG, true);
-    private static final String APP_NAME = "TicTacToe";
+    private static final int REQUEST_GMS_ERROR = 0;
 
-    private ApplicationSession mSession;
-    private SessionListener mSessionListener;
-    private TicTacToeStream mGameMessageStream;
+    private static final String APP_ID = "BFEBD3F1";
 
+    private Button mJoinGameButton;
     private GameView mGameView;
     private TextView mInfoView;
     private TextView mPlayerNameView;
 
-    private CastContext mCastContext;
     private CastDevice mSelectedDevice;
+    private GoogleApiClient mApiClient;
+    private Cast.Listener mCastListener;
+    private ConnectionCallbacks mConnectionCallbacks;
+    private ConnectionFailedListener mConnectionFailedListener;
     private MediaRouter mMediaRouter;
     private MediaRouteSelector mMediaRouteSelector;
     private MediaRouter.Callback mMediaRouterCallback;
+    private TicTacToeChannel mGameChannel;
 
     /**
      * Called when the activity is first created. Initializes the game with necessary listeners
-     * for player interaction, and creates a new message stream.
+     * for player interaction, and creates a new cast channel.
      */
     @Override
     public void onCreate(Bundle bundle) {
         super.onCreate(bundle);
         setContentView(R.layout.game);
 
+        mJoinGameButton = (Button) findViewById(R.id.join_game);
         mGameView = (GameView) findViewById(R.id.game_view);
         mInfoView = (TextView) findViewById(R.id.info_turn);
         mPlayerNameView = (TextView) findViewById(R.id.player_name);
@@ -88,15 +92,30 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
         mGameView.setFocusableInTouchMode(true);
         mGameView.setCellListener(new CellListener());
 
-        mSessionListener = new SessionListener();
-        mGameMessageStream = new TicTacToeStream();
+        mGameChannel = new TicTacToeChannel();
 
-        mCastContext = new CastContext(getApplicationContext());
-        MediaRouteHelper.registerMinimalMediaRouteProvider(mCastContext, this);
         mMediaRouter = MediaRouter.getInstance(getApplicationContext());
-        mMediaRouteSelector = MediaRouteHelper.buildMediaRouteSelector(
-                MediaRouteHelper.CATEGORY_CAST, APP_NAME, null);
+        mMediaRouteSelector = new MediaRouteSelector.Builder()
+                .addControlCategory(CastMediaControlIntent.categoryForCast(APP_ID))
+                .build();
+
         mMediaRouterCallback = new MediaRouterCallback();
+        mCastListener = new CastListener();
+        mConnectionCallbacks = new ConnectionCallbacks();
+        mConnectionFailedListener = new ConnectionFailedListener();
+
+        mJoinGameButton.setEnabled(false);
+        mJoinGameButton.setOnClickListener(new View.OnClickListener() {
+
+            @Override
+            public void onClick(View view) {
+                if (mApiClient != null) {
+                    mGameChannel.join(mApiClient, "MyName");
+                    mInfoView.setText(R.string.waiting_for_player_assignment);
+                    mJoinGameButton.setEnabled(false);
+                }
+            }
+        });
     }
 
     /**
@@ -124,13 +143,22 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
                 MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        int errorCode = GooglePlayServicesUtil.isGooglePlayServicesAvailable(this);
+        if (errorCode != ConnectionResult.SUCCESS) {
+            GooglePlayServicesUtil.getErrorDialog(errorCode, this, REQUEST_GMS_ERROR).show();
+        }
+    }
+
     /**
      * Removes the activity from memory when the activity is paused.
      */
     @Override
     protected void onPause() {
-        super.onPause();
         finish();
+        super.onPause();
     }
 
     /**
@@ -138,40 +166,9 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
      */
     @Override
     protected void onStop() {
-        endSession();
+        setSelectedDevice(null);
         mMediaRouter.removeCallback(mMediaRouterCallback);
         super.onStop();
-    }
-
-    /**
-     * Ends any existing application session with a Chromecast device.
-     */
-    private void endSession() {
-        if ((mSession != null) && (mSession.hasStarted())) {
-            try {
-                if (mSession.hasChannel()) {
-                    mGameMessageStream.leave();
-                }
-                mSession.endSession();
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to end the session.", e);
-            } catch (IllegalStateException e) {
-                Log.e(TAG, "Unable to end session.", e);
-            } finally {
-                mSession = null;
-            }
-        }
-    }
-
-    /**
-     * Unregisters the media route provider and disposes the CastContext.
-     */
-    @Override
-    public void onDestroy() {
-        MediaRouteHelper.unregisterMediaRouteProvider(mCastContext);
-        mCastContext.dispose();
-        mCastContext = null;
-        super.onDestroy();
     }
 
     /**
@@ -189,10 +186,10 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
      */
     private String convertGameStateToPlayer(State player) {
         if (player == State.PLAYER_X) {
-            return GameMessageStream.PLAYER_X;
+            return GameChannel.PLAYER_X;
         }
         if (player == State.PLAYER_O) {
-            return GameMessageStream.PLAYER_O;
+            return GameChannel.PLAYER_O;
         }
         return null;
     }
@@ -226,8 +223,8 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
                     @Override
                     public void onClick(DialogInterface dialog, int id) {
                         mPlayerNameView.setText(null);
+                        mGameChannel.join(mApiClient, "MyName");
                         mInfoView.setText(R.string.waiting_for_player_assignment);
-                        mGameMessageStream.join("MyName");
                     }
                 })
                 .setNegativeButton(R.string.leave, new DialogInterface.OnClickListener() {
@@ -241,21 +238,47 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
     }
 
     private void setSelectedDevice(CastDevice device) {
+        Log.d(TAG, "setSelectedDevice: " + device);
         mSelectedDevice = device;
 
         if (mSelectedDevice != null) {
-            mSession = new ApplicationSession(mCastContext, mSelectedDevice);
-            mSession.setListener(mSessionListener);
-
             try {
-                mSession.startSession(APP_NAME);
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to open a session", e);
+                disconnectApiClient();
+                connectApiClient();
+            } catch (IllegalStateException e) {
+                Log.w(TAG, "Exception while connecting API client", e);
+                disconnectApiClient();
             }
         } else {
-            endSession();
+            if (mApiClient != null) {
+                if (mApiClient.isConnected()) {
+                    mGameChannel.leave(mApiClient);
+                }
+                disconnectApiClient();
+            }
+            mJoinGameButton.setEnabled(false);
+
             mPlayerNameView.setText(null);
             mInfoView.setText(R.string.select_device_text);
+            mMediaRouter.selectRoute(mMediaRouter.getDefaultRoute());
+        }
+    }
+
+    private void connectApiClient() {
+        Cast.CastOptions apiOptions = Cast.CastOptions.builder(mSelectedDevice, mCastListener)
+                .build();
+        mApiClient = new GoogleApiClient.Builder(this)
+                .addApi(Cast.API, apiOptions)
+                .addConnectionCallbacks(mConnectionCallbacks)
+                .addOnConnectionFailedListener(mConnectionFailedListener)
+                .build();
+        mApiClient.connect();
+    }
+
+    private void disconnectApiClient() {
+        if (mApiClient != null) {
+            mApiClient.disconnect();
+            mApiClient = null;
         }
     }
 
@@ -263,15 +286,17 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
      * Called when a user selects a route.
      */
     private void onRouteSelected(RouteInfo route) {
-        sLog.d("onRouteSelected: %s", route.getName());
-        MediaRouteHelper.requestCastDeviceForRoute(route);
+        Log.d(TAG, "onRouteSelected: " + route.getName());
+
+        CastDevice device = CastDevice.getFromBundle(route.getExtras());
+        setSelectedDevice(device);
     }
 
     /**
      * Called when a user unselects a route.
      */
     private void onRouteUnselected(RouteInfo route) {
-        sLog.d("onRouteUnselected: %s", route.getName());
+        Log.d(TAG, "onRouteUnselected: " + route.getName());
         setSelectedDevice(null);
     }
 
@@ -282,44 +307,17 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
     private class CellListener implements ICellListener {
         @Override
         public void onCellSelected(int row, int column) {
-            mGameMessageStream.move(row, column);
-        }
-    }
-
-    /**
-     * A class which listens to session start events. On detection, it attaches the game's message
-     * stream and joins a player to the game.
-     */
-    private class SessionListener implements ApplicationSession.Listener {
-        @Override
-        public void onSessionStarted(ApplicationMetadata appMetadata) {
-            sLog.d("SessionListener.onStarted");
-
-            mInfoView.setText(R.string.waiting_for_player_assignment);
-            ApplicationChannel channel = mSession.getChannel();
-            if (channel == null) {
-                Log.w(TAG, "onStarted: channel is null");
-                return;
+            if ((mGameView.getAssignedPlayer() == State.PLAYER_O)
+                    || (mGameView.getAssignedPlayer() == State.PLAYER_X)) {
+                mGameChannel.move(mApiClient, row, column);
             }
-            channel.attachMessageStream(mGameMessageStream);
-            mGameMessageStream.join("MyName");
-        }
-
-        @Override
-        public void onSessionStartFailed(SessionError error) {
-            sLog.d("SessionListener.onStartFailed: %s", error);
-        }
-
-        @Override
-        public void onSessionEnded(SessionError error) {
-            sLog.d("SessionListener.onEnded: %s", error);
         }
     }
 
     /**
-     * An extension of the GameMessageStream specifically for the TicTacToe game.
+     * An extension of the GameChannel specifically for the TicTacToe game.
      */
-    private class TicTacToeStream extends GameMessageStream {
+    private class TicTacToeChannel extends GameChannel {
         /**
          * Sets displays accordingly when a new player joins the game.
          *
@@ -329,9 +327,9 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
         @Override
         protected void onGameJoined(String playerSymbol, String opponentName) {
             State newPlayer = State.EMPTY;
-            if (GameMessageStream.PLAYER_X.equals(playerSymbol)) {
+            if (GameChannel.PLAYER_X.equals(playerSymbol)) {
                 newPlayer = State.PLAYER_X;
-            } else if (GameMessageStream.PLAYER_O.equals(playerSymbol)) {
+            } else if (GameChannel.PLAYER_O.equals(playerSymbol)) {
                 newPlayer = State.PLAYER_O;
             }
 
@@ -339,7 +337,7 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
             mPlayerNameView.setText(
                     String.format(getResources().getString(R.string.player_name), playerSymbol));
             mInfoView.setText(String.format(
-                    getResources().getString(R.string.player_turn), GameMessageStream.PLAYER_X));
+                    getResources().getString(R.string.player_turn), GameChannel.PLAYER_X));
         }
 
         /**
@@ -348,10 +346,10 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
         @Override
         protected void onGameMove(String playerSymbol, int row, int column, boolean isGameOver) {
             State player = State.PLAYER_O;
-            String otherPlayerName = GameMessageStream.PLAYER_X;
-            if (GameMessageStream.PLAYER_X.equals(playerSymbol)) {
+            String otherPlayerName = GameChannel.PLAYER_X;
+            if (GameChannel.PLAYER_X.equals(playerSymbol)) {
                 player = State.PLAYER_X;
-                otherPlayerName = GameMessageStream.PLAYER_O;
+                otherPlayerName = GameChannel.PLAYER_O;
             }
 
             mGameView.setCell(row, column, player);
@@ -411,12 +409,13 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
          */
         @Override
         protected void onGameError(String errorMessage) {
+            mJoinGameButton.setEnabled(false);
             if (getResources().getString(R.string.full_game).equals(errorMessage)) {
                 mPlayerNameView.setText(R.string.full_game);
                 mInfoView.setText(R.string.observing);
                 mGameView.clearBoard();
                 mGameView.setAssignedPlayer(State.EMPTY);
-                mGameMessageStream.requestBoardLayout();
+                mGameChannel.requestBoardLayout(mApiClient);
             }
 
             new AlertDialog.Builder(GameActivity.this)
@@ -440,31 +439,74 @@ public class GameActivity extends ActionBarActivity implements MediaRouteAdapter
     private class MediaRouterCallback extends MediaRouter.Callback {
         @Override
         public void onRouteSelected(MediaRouter router, RouteInfo route) {
-            sLog.d("onRouteSelected: %s", route);
+            Log.d(TAG, "onRouteSelected: " + route);
             GameActivity.this.onRouteSelected(route);
         }
 
         @Override
         public void onRouteUnselected(MediaRouter router, RouteInfo route) {
-            sLog.d("onRouteUnselected: %s", route);
+            Log.d(TAG, "onRouteUnselected: " + route);
             GameActivity.this.onRouteUnselected(route);
         }
     }
 
-    /* MediaRouteAdapter implementation */
-
-    @Override
-    public void onDeviceAvailable(CastDevice device, String routeId,
-            MediaRouteStateChangeListener listener) {
-        sLog.d("onDeviceAvailable: %s (route %s)", device, routeId);
-        setSelectedDevice(device);
+    private class CastListener extends Cast.Listener {
+        @Override
+        public void onApplicationDisconnected(int statusCode) {
+            Log.d(TAG, "Cast.Listener.onApplicationDisconnected: " + statusCode);
+            try {
+                Cast.CastApi.removeMessageReceivedCallbacks(mApiClient,
+                        mGameChannel.getNamespace());
+            } catch (IOException e) {
+                Log.w(TAG, "Exception while launching application", e);
+            }
+        }
     }
 
-    @Override
-    public void onSetVolume(double volume) {
+    private class ConnectionCallbacks implements GoogleApiClient.ConnectionCallbacks {
+        @Override
+        public void onConnectionSuspended(int cause) {
+            Log.d(TAG, "ConnectionCallbacks.onConnectionSuspended");
+        }
+
+        @Override
+        public void onConnected(Bundle connectionHint) {
+            Log.d(TAG, "ConnectionCallbacks.onConnected");
+            Cast.CastApi.launchApplication(mApiClient, APP_ID).setResultCallback(
+                    new ConnectionResultCallback());
+        }
     }
 
-    @Override
-    public void onUpdateVolume(double delta) {
+    private class ConnectionFailedListener implements GoogleApiClient.OnConnectionFailedListener {
+        @Override
+        public void onConnectionFailed(ConnectionResult result) {
+            Log.d(TAG, "ConnectionFailedListener.onConnectionFailed");
+            setSelectedDevice(null);
+        }
     }
+
+    private final class ConnectionResultCallback implements
+            ResultCallback<ApplicationConnectionResult> {
+        @Override
+        public void onResult(ApplicationConnectionResult result) {
+            Status status = result.getStatus();
+            ApplicationMetadata appMetaData = result.getApplicationMetadata();
+
+            if (status.isSuccess()) {
+                Log.d(TAG, "ConnectionResultCallback: " + appMetaData.getName());
+                mJoinGameButton.setEnabled(true);
+                try {
+                    Cast.CastApi.setMessageReceivedCallbacks(mApiClient,
+                            mGameChannel.getNamespace(), mGameChannel);
+                } catch (IOException e) {
+                    Log.w(TAG, "Exception while launching application", e);
+                }
+            } else {
+                Log.d(TAG, "ConnectionResultCallback. Unable to launch the game. statusCode: "
+                        + status.getStatusCode());
+                mJoinGameButton.setEnabled(false);
+            }
+        }
+    }
+
 }

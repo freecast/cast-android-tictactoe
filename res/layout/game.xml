@@ -22,7 +22,7 @@
     android:gravity="center_horizontal"
     android:orientation="vertical" >
 
-    <com.google.cast.samples.tictactoe.GameView
+    <com.google.android.gms.cast.samples.tictactoe.GameView
         android:id="@+id/game_view"
         android:layout_width="wrap_content"
         android:layout_height="0dip"
@@ -49,5 +49,19 @@
         android:textColor="@android:color/white"
         android:textIsSelectable="false"
         android:textSize="24sp" />
+
+    <LinearLayout
+        android:id="@+id/buttons"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal" >
+
+        <Button
+            android:id="@+id/join_game"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:text="@string/join_game" />
+    </LinearLayout>
 
 </LinearLayout>
